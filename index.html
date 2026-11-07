@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lapland Night</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <!-- The 3D landscape lives behind the page content. -->
+    <canvas id="bg" aria-hidden="true"></canvas>
+
+    <!-- Placeholder content, to show the scene working as a background. -->
+    <main class="content">
+      <section class="hero">
+        <h1>Revontulet</h1>
+        <p>A low-poly Finnish night, rendered live.</p>
+      </section>
+      <section class="card">
+        <h2>Page content goes here</h2>
+        <p>Scroll and move your mouse — the scene is a real 3D world, so parallax comes for free.</p>
+      </section>
+    </main>
+
+    <button id="sound-toggle" class="sound-toggle" aria-pressed="false" aria-label="Turn ambient sound on">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+        <path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor" />
+        <path class="waves" d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+        <path class="mute" d="M16.5 9.5l5 5m0-5l-5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+      </svg>
+      <span class="label">Sound off</span>
+    </button>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
