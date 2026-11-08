@@ -1,13 +1,39 @@
 import * as THREE from 'three';
-import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { palette } from './palette.js';
-import { lerp } from './rng.js';
 import { LAKE } from './terrain.js';
+import {
+  createSnowTreeGeometry, createSnowTreeMaterial, DEFAULT_FOREST_MIX,
+} from './models/snowTrees.js';
 
-// --- Procedural placeholder models ---------------------------------------
-// These stand in for real assets. Swap them later for GLBs (Quaternius, Kenney,
-// your own Blender models): the scatter code only needs a BufferGeometry with
-// vertex colours, with its origin at the base of the model.
+// --- Trees -------------------------------------------------------------------
+// Snow-loaded Lapland trees from models/snowTrees.js. The mix of types depends
+// on where a tree stands: more pines and young buried trees along the shore,
+// heavy crown-snow ("tykky") columns, hooks and ghosts up on the hills.
+// The lightly dusted `spruce` type is left out everywhere: next to the
+// snow-encased trees it looked out of place.
+const { spruce: _lightlyDusted, ...FOREST_MIX } = DEFAULT_FOREST_MIX;
+const TREE_MIX = {
+  shore: { pine: 0.35, column: 0.3, ghost: 0.06, hook: 0.04, mound: 0.15, arch: 0.1 },
+  hills: { column: 0.36, hook: 0.13, ghost: 0.26, pine: 0.07, mound: 0.12, arch: 0.06 },
+  forest: FOREST_MIX,
+};
+const VARIANTS_PER_TYPE = 3;
+
+// Trees closer than this to the camera use the rounder, high-detail geometry.
+const NEAR = { x: -4, z: 40, distance: 60 };
+
+function pickType(rng, mix) {
+  const entries = Object.entries(mix);
+  let r = rng() * entries.reduce((s, [, w]) => s + w, 0);
+  for (const [type, w] of entries) if ((r -= w) <= 0) return type;
+  return entries[entries.length - 1][0];
+}
+
+// --- Rocks (procedural placeholder) ----------------------------------------
+// Stands in for real assets: drop GLBs in src/assets/models/rock/ to replace
+// it. The scatter code only needs a BufferGeometry with vertex colours, with
+// its origin at the base of the model.
 
 function colorize(geo, hex) {
   const c = new THREE.Color(hex);
@@ -15,48 +41,6 @@ function colorize(geo, hex) {
   for (let i = 0; i < arr.length; i += 3) arr.set([c.r, c.g, c.b], i);
   geo.setAttribute('color', new THREE.BufferAttribute(arr, 3));
   return geo;
-}
-
-function makeSpruce() {
-  const parts = [];
-  parts.push(colorize(new THREE.CylinderGeometry(0.15, 0.25, 1.3, 5).translate(0, 0.65, 0), palette.trunk));
-
-  const tiers = 4;
-  for (let i = 0; i < tiers; i++) {
-    const t = i / (tiers - 1);
-    const r = lerp(1.7, 0.55, t);
-    const h = lerp(2.4, 1.6, t);
-    const y = 0.9 + i * 1.15;
-    parts.push(colorize(new THREE.ConeGeometry(r, h, 7).translate(0, y + h / 2, 0), i % 2 ? palette.spruce : palette.spruceDark));
-    // Snow cap: a slightly fatter cone sitting on the upper part of the tier.
-    const sh = h * 0.55;
-    parts.push(colorize(new THREE.ConeGeometry(r * 0.58, sh, 7).translate(0, y + h - sh / 2 + 0.04, 0), palette.snow));
-  }
-  return mergeGeometries(parts);
-}
-
-function makeBirch(rng) {
-  const parts = [];
-  const height = 7;
-  parts.push(colorize(new THREE.CylinderGeometry(0.11, 0.18, height, 6).translate(0, height / 2, 0), palette.birch));
-
-  // Black bark marks.
-  for (let i = 0; i < 5; i++) {
-    const y = rng.range(0.6, height - 1);
-    const r = lerp(0.18, 0.11, y / height) + 0.01;
-    parts.push(colorize(new THREE.CylinderGeometry(r, r, rng.range(0.08, 0.2), 6).translate(0, y, 0), palette.birchMark));
-  }
-
-  // Bare winter branches.
-  for (let i = 0; i < 6; i++) {
-    const len = rng.range(1.2, 2.4);
-    const branch = new THREE.CylinderGeometry(0.025, 0.05, len, 4).translate(0, len / 2, 0);
-    branch.rotateZ(rng.range(0.5, 0.9));
-    branch.rotateY((i / 6) * Math.PI * 2 + rng.range(-0.3, 0.3));
-    branch.translate(0, rng.range(3.2, height - 0.6), 0);
-    parts.push(colorize(branch, palette.birch));
-  }
-  return mergeGeometries(parts);
 }
 
 function makeRock(rng) {
@@ -137,10 +121,10 @@ function instanced(name, parts, transforms, { flatten = true } = {}) {
 }
 
 // Target heights loaded models are normalised to, matching the placeholders.
-const MODEL_HEIGHT = { spruce: 6, birch: 7.5, rock: 1.1 };
+const MODEL_HEIGHT = { rock: 1.1 };
 
 export function createVegetation(rng, terrain, { avoid = [] } = {}) {
-  const { heightAt, lakeDistance, fbm } = terrain;
+  const { heightAt, surfaceAt, lakeDistance, fbm } = terrain;
   const group = new THREE.Group();
   group.name = 'vegetation';
 
@@ -164,22 +148,26 @@ export function createVegetation(rng, terrain, { avoid = [] } = {}) {
       rng() < density(x, z),
   });
 
-  const spruces = [];
-  const birches = [];
+  // Trees, bucketed by type, variant and detail level for instancing.
+  const treeSets = new Map();
+  const counts = {};
   for (const { x, z } of spots) {
-    const nearShore = lakeDistance(x, z) < 2.2;
-    const isBirch = rng() < (nearShore ? 0.35 : 0.1);
-    const t = {
+    const zone = lakeDistance(x, z) < 2.2 ? 'shore' : z < -35 ? 'hills' : 'forest';
+    const type = pickType(rng, TREE_MIX[zone]);
+    const variant = Math.floor(rng() * VARIANTS_PER_TYPE);
+    const detail = Math.hypot(x - NEAR.x, z - NEAR.z) < NEAR.distance ? 'high' : 'low';
+    const key = `${type}:${variant}:${detail}`;
+    if (!treeSets.has(key)) treeSets.set(key, { type, variant, detail, transforms: [] });
+    treeSets.get(key).transforms.push({
       x, z,
-      y: heightAt(x, z) - 0.2,
+      y: surfaceAt(x, z) - 0.1, // the drawn ground, so nothing floats on slopes
       rotY: rng() * Math.PI * 2,
-      tiltX: rng.range(-0.05, 0.05),
-      tiltZ: rng.range(-0.05, 0.05),
-      s: rng.range(0.8, 1.5) * (z < -40 ? 1.25 : 1),
-      shade: rng.range(0.82, 1.05),
-      variant: rng(), // picks a model variant once real models exist
-    };
-    (isBirch ? birches : spruces).push(t);
+      tiltX: rng.range(-0.04, 0.04),
+      tiltZ: rng.range(-0.04, 0.04),
+      s: rng.range(0.8, 1.2) * (z < -40 ? 1.2 : 1),
+      shade: rng.range(0.88, 1.04),
+    });
+    counts[type] = (counts[type] ?? 0) + 1;
   }
 
   // Rocks around the shoreline.
@@ -197,9 +185,17 @@ export function createVegetation(rng, terrain, { avoid = [] } = {}) {
     });
   }
 
+  // One geometry per type x variant x detail, one shared material.
+  const treeMaterial = createSnowTreeMaterial();
+  const trees = new THREE.Group();
+  trees.name = 'trees';
+  for (const { type, variant, detail, transforms } of treeSets.values()) {
+    const geometry = createSnowTreeGeometry(type, { seed: variant + 1, detail });
+    trees.add(instanced(`${type}-${variant}-${detail}`, [{ geometry, material: treeMaterial }], transforms));
+  }
+  group.add(trees);
+
   const sets = {
-    spruce: { transforms: spruces, placeholder: () => makeSpruce() },
-    birch: { transforms: birches, placeholder: () => makeBirch(rng) },
     rock: { transforms: rocks, placeholder: () => makeRock(rng) },
   };
 
@@ -238,7 +234,7 @@ export function createVegetation(rng, terrain, { avoid = [] } = {}) {
   return {
     object: group,
     upgrade,
-    counts: { spruces: spruces.length, birches: birches.length, rocks: rocks.length },
+    counts: { ...counts, rocks: rocks.length },
   };
 }
 

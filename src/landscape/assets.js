@@ -6,8 +6,6 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 // Drop-in models. Put .glb files in these folders and they're picked up
 // automatically (Vite discovers them at build time, no code changes):
 //
-//   src/assets/models/spruce/*.glb   variants of the main conifer
-//   src/assets/models/birch/*.glb
 //   src/assets/models/rock/*.glb
 //   src/assets/models/cabin/*.glb    first file is used
 //

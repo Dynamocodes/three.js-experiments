@@ -102,5 +102,33 @@ export function createTerrain(rng) {
   );
   mesh.name = 'terrain';
 
-  return { mesh, heightAt, lakeDistance, fbm };
+  /**
+   * Height of the drawn surface: the flat triangle actually under (x, z).
+   * The mesh is coarse (~2.5 units between vertices), so on slopes this can
+   * differ from heightAt by half a unit. Use it to sit things on the ground.
+   */
+  const cell = SIZE / SEG;
+  const ta = new THREE.Vector3(), tb = new THREE.Vector3(), tc = new THREE.Vector3();
+  const surfaceAt = (x, z) => {
+    const ix = Math.floor((x + SIZE / 2) / cell);
+    const iz = Math.floor((z + 70 + SIZE / 2) / cell);
+    if (ix < 0 || iz < 0 || ix >= SEG || iz >= SEG) return heightAt(x, z);
+    // PlaneGeometry emits two triangles per cell, row by row; toNonIndexed keeps the order.
+    const first = (iz * SEG + ix) * 2 * 3;
+    for (let t = 0; t < 2; t++) {
+      const i = first + t * 3;
+      ta.fromBufferAttribute(p, i);
+      tb.fromBufferAttribute(p, i + 1);
+      tc.fromBufferAttribute(p, i + 2);
+      // Barycentric coordinates in the xz plane.
+      const d = (tb.z - tc.z) * (ta.x - tc.x) + (tc.x - tb.x) * (ta.z - tc.z);
+      const u = ((tb.z - tc.z) * (x - tc.x) + (tc.x - tb.x) * (z - tc.z)) / d;
+      const v = ((tc.z - ta.z) * (x - tc.x) + (ta.x - tc.x) * (z - tc.z)) / d;
+      const w = 1 - u - v;
+      if (u >= -1e-6 && v >= -1e-6 && w >= -1e-6) return u * ta.y + v * tb.y + w * tc.y;
+    }
+    return heightAt(x, z);
+  };
+
+  return { mesh, heightAt, surfaceAt, lakeDistance, fbm };
 }

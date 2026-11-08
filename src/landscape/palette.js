@@ -10,11 +10,7 @@ export const palette = {
   rock: '#4d5566',
   shore: '#232a38',
 
-  spruce: '#1b3a33',
-  spruceDark: '#142c27',
-  trunk: '#3a2a22',
-  birch: '#d8d4c8',
-  birchMark: '#2a2a2a',
+  // Tree colours live with the tree models: models/snowTrees.js.
 
   cabinRed: '#7c2318',
   cabinTrim: '#e9e4da',

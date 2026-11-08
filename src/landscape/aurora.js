@@ -4,6 +4,9 @@ import { palette } from './palette.js';
 // Northern lights: a few tall ribbons following curves far behind the hills.
 // The fragment shader draws the curtain (bright lower edge, vertical rays,
 // fade upwards); the vertex shader makes the curtain fold and sway.
+//
+// A volumetric (raymarched) alternative is documented and kept in
+// docs/deferred/aurora-raymarching/.
 
 const noiseGLSL = /* glsl */ `
   float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -42,9 +45,23 @@ function ribbonGeometry(curve, height, segments) {
   return geo;
 }
 
-export function createAurora(rng) {
+// All ribbons turn together around a point behind the hills, so the display
+// keeps one general direction that slowly swings away from straight
+// left-to-right: one end comes toward the viewer and climbs up the sky.
+const PIVOT = new THREE.Vector3(0, 0, -240);
+
+export function createAurora(rng, {
+  maxTurn = 0.6, // radians either side of left-to-right
+  turnSpeed = 0.02, // how fast the heading wanders
+} = {}) {
   const group = new THREE.Group();
   group.name = 'aurora';
+  group.position.copy(PIVOT);
+  // Ribbons are built in world coordinates; this offsets them so the outer
+  // group's rotation happens around PIVOT.
+  const ribbonsGroup = new THREE.Group();
+  ribbonsGroup.position.copy(PIVOT).negate();
+  group.add(ribbonsGroup);
 
   const shared = {
     uTime: { value: 0 },
@@ -124,13 +141,18 @@ export function createAurora(rng) {
 
     const mesh = new THREE.Mesh(ribbonGeometry(curve, r.height, 400), mat);
     mesh.frustumCulled = false; // vertices move in the shader
-    group.add(mesh);
+    ribbonsGroup.add(mesh);
   }
 
   // A faint green light so the aurora actually tints the snow.
   const light = new THREE.DirectionalLight(palette.auroraLow, 0.5);
   light.position.set(0, 60, -200);
-  group.add(light);
+  ribbonsGroup.add(light);
+
+  // Heading: null = automatic slow wander; a number (radians) pins it.
+  let headingOverride = null;
+  const autoHeading = (t) =>
+    maxTurn * (0.7 * Math.sin(t * turnSpeed) + 0.3 * Math.sin(t * turnSpeed * 2.3 + 1.7));
 
   return {
     object: group,
@@ -139,8 +161,11 @@ export function createAurora(rng) {
       shared.uIntensity.value = v;
       light.intensity = 0.5 * v;
     },
+    get heading() { return group.rotation.y; },
+    set heading(v) { headingOverride = v; },
     update(time) {
       shared.uTime.value = time;
+      group.rotation.y = headingOverride ?? autoHeading(time);
     },
   };
 }

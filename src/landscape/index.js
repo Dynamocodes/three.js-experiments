@@ -9,6 +9,7 @@ import { createCabin } from './cabin.js';
 import { createAurora } from './aurora.js';
 import { createSnow } from './snow.js';
 import { createSmoke } from './smoke.js';
+import { createPier } from './pier.js';
 import { createCameraRig } from './cameraRig.js';
 import { modelUrls, loadInstanceParts, loadModel } from './assets.js';
 
@@ -54,7 +55,13 @@ export function createLandscape(canvas, { seed = 1 } = {}) {
   const smoke = createSmoke(cabin.model.getObjectByName('smokeAnchor'));
   scene.add(smoke.object);
 
-  const vegetation = createVegetation(rng, terrain, { avoid: [{ ...cabinSpot, r: 9 }] });
+  // Pier on the near shore, right of the cabin, reaching out into the lake.
+  const pier = createPier(terrain, { x: 16, turn: -0.45 });
+  scene.add(pier.object);
+
+  const vegetation = createVegetation(rng, terrain, {
+    avoid: [{ ...cabinSpot, r: 9 }, { x: pier.footprint.x, z: pier.footprint.z, r: pier.footprint.r }],
+  });
   scene.add(vegetation.object);
 
   // Swap placeholders for any models dropped into src/assets/models/*.
@@ -97,7 +104,7 @@ export function createLandscape(canvas, { seed = 1 } = {}) {
   // Loop. Paused when the tab is hidden; a single still frame for reduced motion.
   const clock = new THREE.Clock();
   let time = 0;
-  const updatables = [sky, aurora, snow, smoke];
+  const updatables = [sky, aurora, snow, smoke, pier];
 
   const tick = () => {
     const dt = Math.min(clock.getDelta(), 0.1);
@@ -126,7 +133,7 @@ export function createLandscape(canvas, { seed = 1 } = {}) {
 
   // Handy for poking at the scene from the devtools console.
   if (import.meta.env.DEV) {
-    window.landscape = { scene, camera, renderer, aurora, counts: vegetation.counts, modelUrls, vegetation };
+    window.landscape = { scene, camera, renderer, aurora, terrain, pier, counts: vegetation.counts, modelUrls, vegetation };
   }
 
   return {
