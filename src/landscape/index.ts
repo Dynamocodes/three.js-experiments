@@ -181,7 +181,7 @@ export function createLandscape(canvas: HTMLCanvasElement, { seed = 1 }: Landsca
   // Loop. Paused when the tab is hidden; a single still frame for reduced motion.
   const clock = new THREE.Clock();
   let time = 0;
-  const updatables: Updatable[] = [sky, aurora, snowfall, shootingStars, smoke, sauna, pier, snowman, snowballs];
+  const updatables: Updatable[] = [sky, aurora, snowfall, water, shootingStars, smoke, sauna, pier, snowman, snowballs];
 
   const tick = () => {
     const dt = Math.min(clock.getDelta(), 0.1);
@@ -210,7 +210,7 @@ export function createLandscape(canvas: HTMLCanvasElement, { seed = 1 }: Landsca
 
   // Handy for poking at the scene from the devtools console.
   if (import.meta.env.DEV) {
-    window.landscape = { scene, sauna, camera, renderer, aurora, shootingStars, snowman, snowballs, terrain, pier, counts: vegetation.counts, modelUrls, vegetation };
+    window.landscape = { scene, water, sauna, camera, renderer, aurora, shootingStars, snowman, snowballs, terrain, pier, counts: vegetation.counts, modelUrls, vegetation };
   }
 
   return {
@@ -234,6 +234,7 @@ export function createLandscape(canvas: HTMLCanvasElement, { seed = 1 }: Landsca
         mats.forEach((m) => m.dispose());
       });
       water.object.getRenderTarget().dispose();
+      sauna.dispose();
       snowballs.dispose();
       renderer.dispose();
     },

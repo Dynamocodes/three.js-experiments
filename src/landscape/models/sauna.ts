@@ -34,7 +34,7 @@ export const DEFAULT_SAUNA_COLORS = {
   frame: '#6b4a2e',
   metal: '#2a2d33',
   tub: '#8d5c3a',
-  water: '#22324a',
+  water: '#35506e',
   lanternGlow: '#ffc27a',
   towel: '#eef0f4',
 };
@@ -76,7 +76,7 @@ export function createSauna(options: SaunaOptions = {}) {
     frame: mat(colors.frame),
     metal: mat(colors.metal),
     tub: mat(colors.tub),
-    water: mat(colors.water, { roughness: 0.2 }),
+    water: mat(colors.water, { roughness: 0.12, metalness: 0.25, emissive: '#1a2a3c', emissiveIntensity: 0.6 }),
     lantern: mat(colors.lanternGlow, { emissive: colors.lanternGlow, emissiveIntensity: 2 }),
     towel: mat(colors.towel),
   };
@@ -297,8 +297,13 @@ export function createSauna(options: SaunaOptions = {}) {
     for (const by of [0.2, 0.75]) {
       add(new THREE.CylinderGeometry(0.88 + 0.07 * by + 0.02, 0.88 + 0.07 * by + 0.02, 0.06, 14, 1, true), materials.metal, tubX, tubFloor + by * tubH, tubZ, 'tubBand');
     }
-    add(new THREE.CylinderGeometry(0.98, 0.98, 0.07, 14), materials.tub, tubX, tubFloor + tubH, tubZ, 'tubRim');
-    add(new THREE.CylinderGeometry(0.84, 0.84, 0.08, 14), materials.water, tubX, tubFloor + tubH - 0.04, tubZ, 'water');
+    // Rim: a flat wooden ring (lathed rectangle), open in the middle so the water shows.
+    const rimProfile = [[0.86, -0.035], [0.98, -0.035], [0.98, 0.035], [0.86, 0.035], [0.86, -0.035]]
+      .map(([r, y]) => new THREE.Vector2(r, y));
+    add(new THREE.LatheGeometry(rimProfile, 14), materials.tub, tubX, tubFloor + tubH, tubZ, 'tubRim');
+    // Water filled to just under the rim (lower, and the reflection is mostly the
+    // tub's own inner wall), wide enough to meet the staves.
+    add(new THREE.CylinderGeometry(0.93, 0.93, 0.08, 14), materials.water, tubX, tubFloor + tubH - 0.08, tubZ, 'water');
     // Stove chimney of the wood-fired tub.
     add(new THREE.CylinderGeometry(0.07, 0.07, 1.3, 6), materials.metal, tubX + 0.75, tubFloor + tubH + 0.35, tubZ - 0.6, 'tubStovePipe');
     // Steps up to the rim.

@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import { palette } from '../palette';
 import { createSauna, SAUNA_FOOTPRINT, SAUNA_ROOM } from '../models/sauna';
+import { Reflector } from 'three/addons/objects/Reflector.js';
 import { createSmoke } from '../effects/smoke';
+import { fitReflectionToMirror, skipNestedReflections } from '../world/water';
 import type { Circle, Terrain } from '../types';
 
 export interface SaunaPlacement {
@@ -57,6 +59,30 @@ export function placeSauna(terrain: Terrain, { x, z, facing, mirror = false, see
   if (lightAnchor) light.position.copy(lightAnchor.position);
   sauna.add(light);
 
+  // Hot tub water mirrors the sky and aurora: a small mirror disc on top of
+  // the water, its reflection rendered for just the tub's patch of screen
+  // (and only while the tub is on screen).
+  const tubWater = sauna.getObjectByName('water') as THREE.Mesh<THREE.CylinderGeometry> | undefined;
+  let tubMirror: Reflector | undefined;
+  if (tubWater) {
+    const { radiusTop, height, radialSegments } = tubWater.geometry.parameters;
+    // thetaStart PI/2 lines the disc's corners up with the cylinder's.
+    tubMirror = new Reflector(new THREE.CircleGeometry(radiusTop, radialSegments, Math.PI / 2), {
+      color: 0x6f86a2,
+      textureWidth: 512,
+      textureHeight: 512,
+      clipBias: 0.003,
+      multisample: 4, // smooth edge where the rim meets its reflection
+    });
+    tubMirror.name = 'tubMirror';
+    tubMirror.rotation.x = -Math.PI / 2;
+    tubMirror.position.copy(tubWater.position);
+    tubMirror.position.y += height / 2 + 0.002;
+    fitReflectionToMirror(tubMirror);
+    skipNestedReflections(tubMirror); // outermost: checked first
+    sauna.add(tubMirror);
+  }
+
   const smokeAnchor = sauna.getObjectByName('smokeAnchor');
   if (!smokeAnchor) throw new Error('sauna model has no smokeAnchor');
   const smoke = createSmoke(smokeAnchor, {
@@ -95,6 +121,9 @@ export function placeSauna(terrain: Terrain, { x, z, facing, mirror = false, see
     update(time: number) {
       smoke.update(time);
       steam?.update(time);
+    },
+    dispose() {
+      tubMirror?.dispose();
     },
   };
 }
