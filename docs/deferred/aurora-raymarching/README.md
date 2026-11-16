@@ -9,20 +9,25 @@ to bring the volumetric version back is in this folder.
 system* (section 3.1): curtains running from the back toward the viewer,
 growing, streaming away and respawning with random shapes, with noise in
 height, brightness, softness and thickness. None of that is in the live code
-any more. Copying `aurora.js` from here brings it back together with the
+any more. Copying `aurora.js` from here (section 8) brings it back together with the
 volume.
 
 | File | What it is |
 | --- | --- |
 | `README.md` | This document. |
-| `aurora.js` | The complete volumetric aurora module, a drop-in replacement for `src/landscape/aurora.js`. |
-| `index.js.patch` | The small render-loop change it needs in `src/landscape/index.js`. |
+| `aurora.js` | The complete volumetric aurora module, a replacement for `src/landscape/effects/aurora.ts`. |
+| `index.js.patch` | The small render-loop change it needs in `src/landscape/index.ts`. |
+
+**Note on file names:** this was archived before the project moved to
+TypeScript and its current folder layout. `aurora.js` is plain JavaScript and
+the patch targets the old `src/landscape/index.js`. Section 8 explains how to
+bring it into the current code.
 
 ---
 
 ## 1. Why it was built
 
-The sheet aurora (`src/landscape/aurora.js`) draws each curtain as a flat
+The sheet aurora (`src/landscape/effects/aurora.ts`) draws each curtain as a flat
 ribbon. A ribbon has no thickness, which shows when a curtain turns edge-on to
 the camera. The first fix tried was stacking three sheets a few units apart.
 That looked thick from some angles and fell apart from others, because the
@@ -217,7 +222,7 @@ A second quad with the same shader sits in the scene (`skyMesh`, inside
 
 Two things in the existing scene make this work:
 
-- The sky dome and stars already have `depthWrite: false` (`sky.js`). The
+- The sky dome and stars already have `depthWrite: false` (`world/sky.ts`). The
   depth buffer stays at 1.0 in the sky, so the far-plane quad passes the
   depth test there. If the dome ever writes depth, the aurora disappears.
 - The renderer's default depth function is `LessEqual`.
@@ -225,7 +230,7 @@ Two things in the existing scene make this work:
 ### 3.5 Render-loop integration
 
 `prepare(renderer, camera)` has to run before every `renderer.render(scene,
-camera)`. See `index.js.patch`: all four render calls in `index.js` go through
+camera)`. See `index.js.patch`: all four render calls in `index.ts` go through
 a `draw()` helper:
 
 ```js
@@ -364,19 +369,17 @@ but it cost time while verifying it.
 
 ## 8. How to bring it back
 
-1. Copy `docs/deferred/aurora-raymarching/aurora.js` over
-   `src/landscape/aurora.js`.
-2. Apply the render-loop change from the project root:
-
-   ```bash
-   git apply docs/deferred/aurora-raymarching/index.js.patch
-   ```
-
-   If the patch no longer applies, make the change by hand. Add the `draw()`
-   helper (section 3.5), route all four `renderer.render(scene, camera)` calls
-   through it, and call `aurora.dispose()` in `dispose()`.
-3. Check that `sky.js` still has `depthWrite: false` on the dome and the
-   stars (section 3.4).
+1. Copy `docs/deferred/aurora-raymarching/aurora.js` to
+   `src/landscape/effects/aurora.ts`, replacing the current file. It needs
+   TypeScript types before `npm run typecheck` passes: the parameters of
+   `curtainGeometry`, `randomCurtain` and `createAurora`, and the arrays they
+   build. The import of `palette` also becomes `from '../palette'`.
+2. Make the render-loop change in `src/landscape/index.ts` by hand
+   (`index.js.patch` shows it against the old file): add the `draw()` helper
+   (section 3.5), route every `renderer.render(scene, camera)` call through
+   it, and call `aurora.dispose()` in `dispose()`.
+3. Check that `src/landscape/world/sky.ts` still has `depthWrite: false` on
+   the dome and the stars (section 3.4).
 4. Verify:
    - The aurora shows above the treeline and is hidden by trees and hills.
    - The lake reflects it.

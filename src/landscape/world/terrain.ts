@@ -1,0 +1,149 @@
+import * as THREE from 'three';
+import { createNoise2D } from 'simplex-noise';
+import { palette } from '../palette';
+import { lerp, smoothstep } from '../utils/math';
+import type { Rng } from '../utils/random';
+import type { Terrain } from '../types';
+
+// The lake is an ellipse carved into the terrain. Other modules use this
+// (water plane, keeping trees out of the lake, later the fish).
+export const LAKE = {
+  x: 6, z: -4, rx: 52, rz: 24, waterLevel: 0,
+  // A snowy bank pushing into the near-left of the lake: the cabin's spot.
+  bank: { x: -11, z: 20, radius: 6, push: 1.0 },
+};
+
+export function createTerrain(rng: Rng): Terrain {
+  const noise = createNoise2D(rng);
+
+  const fbm = (x: number, z: number, octaves = 4) => {
+    let sum = 0, amp = 1, freq = 1, norm = 0;
+    for (let i = 0; i < octaves; i++) {
+      sum += amp * noise(x * freq, z * freq);
+      norm += amp;
+      amp *= 0.5;
+      freq *= 2;
+    }
+    return sum / norm; // roughly -1..1
+  };
+
+  // 0 at the lake centre, 1 at the ellipse edge.
+  const lakeDistance = (x: number, z: number) => {
+    const dx = (x - LAKE.x) / LAKE.rx;
+    const dz = (z - LAKE.z) / LAKE.rz;
+    const b = LAKE.bank;
+    const bank = b.push * Math.exp(-((x - b.x) ** 2 + (z - b.z) ** 2) / (2 * b.radius * b.radius));
+    return Math.sqrt(dx * dx + dz * dz) + bank + fbm(x * 0.08, z * 0.08, 2) * 0.12;
+  };
+
+  // Height field: gentle rolling ground, hills rising behind the lake,
+  // ridges on the far sides, lake carved out of the middle.
+  const heightAt = (x: number, z: number) => {
+    let h = 1.6 + fbm(x * 0.03, z * 0.03) * 1.8;
+
+    const back = smoothstep(-20, -110, z);
+    h += back * (16 + fbm(x * 0.012 + 40, z * 0.012) * 14);
+
+    h += smoothstep(45, 110, Math.abs(x)) * (8 + fbm(x * 0.02, z * 0.02 + 9) * 6);
+
+    const shore = smoothstep(0.75, 1.25, lakeDistance(x, z));
+    return lerp(-1.6, h, shore);
+  };
+
+  // Big plane, offset backwards so it reaches the far hills.
+  const SIZE = 420;
+  const SEG = 170;
+  let geo: THREE.BufferGeometry = new THREE.PlaneGeometry(SIZE, SIZE, SEG, SEG);
+  geo.rotateX(-Math.PI / 2);
+  geo.translate(0, 0, -70);
+
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    pos.setY(i, heightAt(pos.getX(i), pos.getZ(i)));
+  }
+
+  // Non-indexed so every triangle can get its own flat colour.
+  geo = geo.toNonIndexed();
+  geo.computeVertexNormals();
+
+  const colors = new Float32Array(geo.attributes.position.count * 3);
+  const p = geo.attributes.position;
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  const n = new THREE.Vector3();
+  const col = new THREE.Color();
+  const snow = new THREE.Color(palette.snow);
+  const snowShade = new THREE.Color(palette.snowShade);
+  const rock = new THREE.Color(palette.rock);
+  const shore = new THREE.Color(palette.shore);
+  // Snow on the steep bank where it meets the water.
+  const bank = new THREE.Color(palette.snow).lerp(snowShade, 0.7);
+
+  for (let i = 0; i < p.count; i += 3) {
+    a.fromBufferAttribute(p, i);
+    b.fromBufferAttribute(p, i + 1);
+    c.fromBufferAttribute(p, i + 2);
+    n.subVectors(c, b).cross(b.clone().sub(a)).normalize();
+    const ny = Math.abs(n.y);
+    const y = (a.y + b.y + c.y) / 3;
+    const top = Math.max(a.y, b.y, c.y);
+    const bottom = Math.min(a.y, b.y, c.y);
+
+    if (y < -0.25 || ny < 0.72) {
+      // The grid is coarse, so at the shore one triangle can reach from the
+      // lake bed up onto the bank. Painted lake-bed dark (or rock grey, when
+      // steep), its tip pokes out of the water as a black shard. Triangles
+      // that cross the waterline are snowy bank instead. (No random draw in
+      // this branch, as before, so everything seeded after the terrain stays
+      // exactly the same.)
+      if (top > 0 && bottom < 0.6) col.copy(bank);
+      else col.copy(y < -0.25 ? shore : rock);
+    } else {
+      col.copy(snow).lerp(snowShade, rng() * 0.6);
+    }
+
+    // Tiny per-face jitter gives the faceted low-poly sparkle.
+    const j = 1 + (rng() - 0.5) * 0.06;
+    for (let k = 0; k < 3; k++) {
+      colors[(i + k) * 3 + 0] = col.r * j;
+      colors[(i + k) * 3 + 1] = col.g * j;
+      colors[(i + k) * 3 + 2] = col.b * j;
+    }
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+  const mesh = new THREE.Mesh(
+    geo,
+    new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 1, metalness: 0 }),
+  );
+  mesh.name = 'terrain';
+
+  /**
+   * Height of the drawn surface: the flat triangle actually under (x, z).
+   * The mesh is coarse (~2.5 units between vertices), so on slopes this can
+   * differ from heightAt by half a unit. Use it to sit things on the ground.
+   */
+  const cell = SIZE / SEG;
+  const ta = new THREE.Vector3(), tb = new THREE.Vector3(), tc = new THREE.Vector3();
+  const surfaceAt = (x: number, z: number) => {
+    const ix = Math.floor((x + SIZE / 2) / cell);
+    const iz = Math.floor((z + 70 + SIZE / 2) / cell);
+    if (ix < 0 || iz < 0 || ix >= SEG || iz >= SEG) return heightAt(x, z);
+    // PlaneGeometry emits two triangles per cell, row by row; toNonIndexed keeps the order.
+    const first = (iz * SEG + ix) * 2 * 3;
+    for (let t = 0; t < 2; t++) {
+      const i = first + t * 3;
+      ta.fromBufferAttribute(p, i);
+      tb.fromBufferAttribute(p, i + 1);
+      tc.fromBufferAttribute(p, i + 2);
+      // Barycentric coordinates in the xz plane.
+      const d = (tb.z - tc.z) * (ta.x - tc.x) + (tc.x - tb.x) * (ta.z - tc.z);
+      const u = ((tb.z - tc.z) * (x - tc.x) + (tc.x - tb.x) * (z - tc.z)) / d;
+      const v = ((tc.z - ta.z) * (x - tc.x) + (ta.x - tc.x) * (z - tc.z)) / d;
+      const w = 1 - u - v;
+      if (u >= -1e-6 && v >= -1e-6 && w >= -1e-6) return u * ta.y + v * tb.y + w * tc.y;
+    }
+    return heightAt(x, z);
+  };
+
+  return { mesh, heightAt, surfaceAt, lakeDistance, fbm };
+}
