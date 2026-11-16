@@ -18,8 +18,9 @@ import * as THREE from 'three';
  * and the downhill side still meets the snow.
  *
  * Anchors (Object3D children by name): 'smokeAnchor' (chimney top),
- * 'steamAnchor' (hot tub water), 'lightAnchor' (in front of the door, for a
- * warm point light).
+ * 'steamAnchor' (centre of the hot tub's water surface; `userData.radius` is
+ * the open water's radius), 'tubStoveAnchor' (top of the tub stove's pipe),
+ * 'lightAnchor' (in front of the door, for a warm point light).
  */
 
 export const DEFAULT_SAUNA_COLORS = {
@@ -306,11 +307,16 @@ export function createSauna(options: SaunaOptions = {}) {
     add(new THREE.CylinderGeometry(0.93, 0.93, 0.08, 14), materials.water, tubX, tubFloor + tubH - 0.08, tubZ, 'water');
     // Stove chimney of the wood-fired tub.
     add(new THREE.CylinderGeometry(0.07, 0.07, 1.3, 6), materials.metal, tubX + 0.75, tubFloor + tubH + 0.35, tubZ - 0.6, 'tubStovePipe');
+    const stoveAnchor = new THREE.Object3D();
+    stoveAnchor.name = 'tubStoveAnchor';
+    stoveAnchor.position.set(tubX + 0.75, tubFloor + tubH + 1.0, tubZ - 0.6);
+    group.add(stoveAnchor);
     // Steps up to the rim.
     box(0.6, 0.35, 0.4, materials.deck[1], tubX - 0.95, tubFloor + 0.17, tubZ + 0.75, 'tubStep');
     const steamAnchor = new THREE.Object3D();
     steamAnchor.name = 'steamAnchor';
-    steamAnchor.position.set(tubX, tubFloor + tubH + 0.05, tubZ);
+    steamAnchor.position.set(tubX, tubFloor + tubH - 0.04, tubZ); // centre of the water surface
+    steamAnchor.userData.radius = 0.84; // open water inside the rim
     group.add(steamAnchor);
   }
 

@@ -3,6 +3,7 @@ import { palette } from '../palette';
 import { createSauna, SAUNA_FOOTPRINT, SAUNA_ROOM } from '../models/sauna';
 import { Reflector } from 'three/addons/objects/Reflector.js';
 import { createSmoke } from '../effects/smoke';
+import { createSteam } from '../effects/steam';
 import { fitReflectionToMirror, skipNestedReflections } from '../world/water';
 import type { Circle, Terrain } from '../types';
 
@@ -92,20 +93,23 @@ export function placeSauna(terrain: Terrain, { x, z, facing, mirror = false, see
     ],
   });
 
-  // Steam off the hot tub: short, wide, slow and faint.
-  const steamAnchor = sauna.getObjectByName('steamAnchor');
-  const steam = steamAnchor && createSmoke(steamAnchor, {
-    color: '#dfe6f2',
+  // Thin wood smoke from the tub stove's pipe.
+  const stoveAnchor = sauna.getObjectByName('tubStoveAnchor');
+  const stoveSmoke = stoveAnchor && createSmoke(stoveAnchor, {
     strands: [
-      { length: 2.6, width: 0.7, curl: 0.5, sway: 0.5, speed: 0.6, freq: 2.2, drift: 0.8, opacity: 0.35, seed: 0.4 },
-      { length: 2.0, width: 0.55, curl: 0.4, sway: 0.4, speed: 0.5, freq: 2.6, drift: 0.6, opacity: 0.28, seed: 2.9 },
-      { length: 1.6, width: 0.5, curl: 0.3, sway: 0.35, speed: 0.7, freq: 3.0, drift: 0.5, opacity: 0.22, seed: 5.1 },
+      { length: 3.6, width: 0.32, curl: 0.6, sway: 0.5, speed: 0.9, freq: 2.2, drift: 1.4, opacity: 0.6, seed: 0.4 },
+      { length: 2.8, width: 0.22, curl: 0.45, sway: 0.4, speed: 1.0, freq: 2.6, drift: 1.1, opacity: 0.45, seed: 2.9 },
     ],
   });
+
+  // Steam rising off the whole water surface.
+  const steamAnchor = sauna.getObjectByName('steamAnchor');
+  const steam = steamAnchor && createSteam(steamAnchor);
 
   const object = new THREE.Group();
   object.name = 'saunaProp';
   object.add(root, smoke.object);
+  if (stoveSmoke) object.add(stoveSmoke.object);
   if (steam) object.add(steam.object);
 
   // Area to keep clear of trees, around the hut and both decks.
@@ -120,6 +124,7 @@ export function placeSauna(terrain: Terrain, { x, z, facing, mirror = false, see
     clearing,
     update(time: number) {
       smoke.update(time);
+      stoveSmoke?.update(time);
       steam?.update(time);
     },
     dispose() {
