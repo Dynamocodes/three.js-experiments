@@ -33,18 +33,21 @@ const LANDING_CLEARANCE = 0.12;
  * sloping into the ground on both sides and at the top.
  *
  * `x`    where along the shore (world x) the pier starts its search line.
+ * `z`    if given, no search: the pontoon centre goes exactly at (x, z).
  * `turn` how far the pier is turned from pointing straight away from the
  *        camera (radians, positive swings the lake end to the left).
  */
 export interface PierPlacement {
   /** Where along the shore (world x) the pier starts its search line. */
   x: number;
+  /** If given, skip the search and put the pontoon centre at (x, z). */
+  z?: number;
   /** Turn from pointing straight away from the camera (radians, + swings the lake end left). */
   turn?: number;
   seed?: number;
 }
 
-export function placePier(terrain: Terrain, { x, turn = 0, seed = 21 }: PierPlacement) {
+export function placePier(terrain: Terrain, { x, z, turn = 0, seed = 21 }: PierPlacement) {
   const pier = buildPier({ seed, landingHeight: LANDING_HEIGHT, castShadow: false, receiveShadow: false });
   pier.userData.clickable = true;
 
@@ -57,8 +60,10 @@ export function placePier(terrain: Terrain, { x, turn = 0, seed = 21 }: PierPlac
   const ground: GroundFn = (v) => terrain.surfaceAt(v.x, v.z);
 
   // Walk until the ground under the landing's back corners reaches the deck.
-  const origin = new THREE.Vector3(x, 0, LAKE.z).addScaledVector(shoreDir, -LANDING_BACK);
-  for (let i = 0; i < 400; i++) {
+  const origin = z === undefined
+    ? new THREE.Vector3(x, 0, LAKE.z).addScaledVector(shoreDir, -LANDING_BACK)
+    : new THREE.Vector3(x, 0, z);
+  for (let i = 0; z === undefined && i < 400; i++) {
     const g = Math.max(...LANDING_X.map((lx) => ground(at(origin, LANDING_BACK, lx))));
     if (g >= LANDING_HEIGHT - LANDING_CLEARANCE) break;
     origin.addScaledVector(shoreDir, 0.1);
@@ -70,7 +75,7 @@ export function placePier(terrain: Terrain, { x, turn = 0, seed = 21 }: PierPlac
   group.name = 'pierRoot';
   group.add(pier, snowdrift(origin, at, ground));
 
-  // Centre of the whole pier, for keeping trees and rocks away.
+  // Centre of the whole pier, for keeping trees away.
   const centre = origin.clone().addScaledVector(shoreDir, 3.5);
 
   return {

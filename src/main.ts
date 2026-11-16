@@ -24,9 +24,17 @@ button.addEventListener('click', () => {
 
 if (import.meta.env.DEV) window.ambience = ambience; // e.g. ambience.wolves() from the console
 
+// Dev only: press C for the camera editor, P for the prop editor; each saves its own defaults.
+// (Left out of production builds: import.meta.env.DEV is false there.)
+let devTools: { dispose(): void } | undefined;
+if (import.meta.env.DEV) {
+  void import('./dev/devTools').then(({ createDevTools }) => { devTools = createDevTools(landscape); });
+}
+
 // Clean up on hot reload so we don't stack WebGL contexts during development.
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
+    devTools?.dispose();
     landscape.dispose();
     ambience.dispose();
   });

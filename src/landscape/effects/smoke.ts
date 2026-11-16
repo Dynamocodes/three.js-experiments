@@ -156,6 +156,11 @@ export function createSmoke(anchor: THREE.Object3D, {
 
   return {
     object: group,
-    update(t: number) { time.value = t; },
+    update(t: number) {
+      time.value = t;
+      // Follow the chimney if its building moves (e.g. in the dev layout tool).
+      anchor.updateWorldMatrix(true, false);
+      anchor.getWorldPosition(origin);
+    },
   };
 }

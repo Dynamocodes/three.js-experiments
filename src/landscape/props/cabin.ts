@@ -10,10 +10,8 @@ type Point = [x: number, z: number];
 // it on the terrain. Includes the corner-log overhang.
 const FOOTPRINT = { minX: -2.85, maxX: 2.85, minZ: -3.45, maxZ: 3.35 };
 
-// Woodpile just off the cabin's front-right corner (lake side), turned so the
-// stacked end grain and the chopping block face the camera.
-// `extent` is its footprint in its own space: pile along X, block toward +Z.
-const WOODPILE = { x: 4.6, z: 1.0, extent: { minX: -1.7, maxX: 1.7, minZ: -0.5, maxZ: 1.8 } };
+// Woodpile footprint in its own space: pile along X, block toward +Z.
+const WOODPILE_EXTENT = { minX: -1.7, maxX: 1.7, minZ: -0.5, maxZ: 1.8 };
 
 /** Lowest terrain height under a set of local (x, z) points of a placed object. */
 function lowestGround(terrain: Terrain, x: number, z: number, facing: number, points: Point[]) {
@@ -39,11 +37,11 @@ export interface CabinPlacement {
   /** Rotation of the cabin (radians). */
   facing: number;
   seed?: number;
-  /** Rotation of the woodpile relative to the cabin. */
-  woodpileFacing?: number;
+  /** Woodpile position and rotation relative to the cabin (default: off its front-right corner). */
+  woodpile?: { x: number; z: number; facing: number };
 }
 
-export function placeCabin(terrain: Terrain, { x, z, facing, seed = 7, woodpileFacing = 0 }: CabinPlacement) {
+export function placeCabin(terrain: Terrain, { x, z, facing, seed = 7, woodpile: W = { x: 4.6, z: 1.0, facing: 0 } }: CabinPlacement) {
   const cabin = buildLogCabin({ seed, castShadow: false, receiveShadow: false });
 
   // Night: the windows glow warm instead of reflecting a daytime sky.
@@ -72,9 +70,8 @@ export function placeCabin(terrain: Terrain, { x, z, facing, seed = 7, woodpileF
   // Woodpile: a sibling of the cabin model (so swapping the cabin for a GLB
   // keeps it), grounded on its own footprint.
   const woodpile = createWoodpile({ castShadow: false, receiveShadow: false });
-  const W = WOODPILE;
-  const e = W.extent;
-  const cos = Math.cos(woodpileFacing), sin = Math.sin(woodpileFacing);
+  const e = WOODPILE_EXTENT;
+  const cos = Math.cos(W.facing), sin = Math.sin(W.facing);
   // Footprint corners: pile space -> cabin space (rotation about Y).
   const footprint = corners(e.minX, e.maxX, e.minZ, e.maxZ).map(([px, pz]): Point => [
     W.x + px * cos + pz * sin,
@@ -82,7 +79,7 @@ export function placeCabin(terrain: Terrain, { x, z, facing, seed = 7, woodpileF
   ]);
   const pileGround = lowestGround(terrain, x, z, facing, footprint);
   woodpile.position.set(W.x, pileGround - root.position.y - 0.04, W.z);
-  woodpile.rotation.y = woodpileFacing;
+  woodpile.rotation.y = W.facing;
   root.add(woodpile);
 
   return {

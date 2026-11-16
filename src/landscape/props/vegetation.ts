@@ -1,12 +1,9 @@
 import * as THREE from 'three';
-import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
-import { palette } from '../palette';
 import { LAKE } from '../world/terrain';
 import {
   createSnowTreeGeometry, createSnowTreeMaterial, DEFAULT_FOREST_MIX,
   type TreeDetail, type TreeMix, type TreeType,
 } from '../models/snowTrees';
-import type { InstancePart, LoadInstanceParts } from '../loaders/models';
 import type { Rng } from '../utils/random';
 import type { Circle, Terrain } from '../types';
 
@@ -33,33 +30,6 @@ function pickType(rng: Rng, mix: TreeMix): TreeType {
   let r = rng() * entries.reduce((s, [, w]) => s + w, 0);
   for (const [type, w] of entries) if ((r -= w) <= 0) return type;
   return entries[entries.length - 1][0];
-}
-
-// --- Rocks (procedural placeholder) ----------------------------------------
-// Stands in for real assets: drop GLBs in src/assets/models/rock/ to replace
-// it. The scatter code only needs a BufferGeometry with vertex colours, with
-// its origin at the base of the model.
-
-function colorize(geo: THREE.BufferGeometry, hex: string) {
-  const c = new THREE.Color(hex);
-  const arr = new Float32Array(geo.attributes.position.count * 3);
-  for (let i = 0; i < arr.length; i += 3) arr.set([c.r, c.g, c.b], i);
-  geo.setAttribute('color', new THREE.BufferAttribute(arr, 3));
-  return geo;
-}
-
-function makeRock(rng: Rng) {
-  let geo: THREE.BufferGeometry = new THREE.IcosahedronGeometry(1, 0);
-  geo.deleteAttribute('normal');
-  geo.deleteAttribute('uv');
-  geo = mergeVertices(geo); // share corners so jitter doesn't open cracks
-  const p = geo.attributes.position;
-  for (let i = 0; i < p.count; i++) {
-    const s = rng.range(0.75, 1.25);
-    p.setXYZ(i, p.getX(i) * s, p.getY(i) * s, p.getZ(i) * s);
-  }
-  geo.computeVertexNormals();
-  return colorize(geo, palette.rock);
 }
 
 // --- Scatter --------------------------------------------------------------
@@ -113,23 +83,12 @@ interface Transform {
   tiltZ?: number;
   /** Uniform scale. */
   s: number;
-  /** Vertical scale, for squashing placeholders (ignored for loaded models). */
-  sy?: number;
   /** Brightness multiplier. */
   shade?: number;
-  /** 0..1, picks a model variant once real models are loaded. */
-  variant?: number;
 }
 
-const placeholderMaterial = () =>
-  new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 1 });
-
-/**
- * Builds InstancedMeshes for one model. `parts` has one entry for a
- * procedural model and one per material for a loaded GLB; every part shares
- * the same instance transforms.
- */
-function instanced(name: string, parts: InstancePart[], transforms: Transform[], { flatten = true } = {}) {
+/** Builds an InstancedMesh of one model, one instance per transform. */
+function instanced(name: string, geometry: THREE.BufferGeometry, material: THREE.Material, transforms: Transform[]) {
   const group = new THREE.Group();
   group.name = name;
   if (!transforms.length) return group;
@@ -139,42 +98,39 @@ function instanced(name: string, parts: InstancePart[], transforms: Transform[],
   const c = new THREE.Color();
   const pos = new THREE.Vector3();
   const scl = new THREE.Vector3();
-  for (const { geometry, material } of parts) {
-    const mesh = new THREE.InstancedMesh(geometry, material, transforms.length);
-    transforms.forEach((t, i) => {
-      e.set(t.tiltX ?? 0, t.rotY, t.tiltZ ?? 0);
-      q.setFromEuler(e);
-      scl.set(t.s, flatten ? t.sy ?? t.s : t.s, t.s);
-      m.compose(pos.set(t.x, t.y, t.z), q, scl);
-      mesh.setMatrixAt(i, m);
-      mesh.setColorAt(i, c.setScalar(t.shade ?? 1));
-    });
-    mesh.instanceMatrix.needsUpdate = true;
-    mesh.computeBoundingSphere();
-    group.add(mesh);
-  }
+  const mesh = new THREE.InstancedMesh(geometry, material, transforms.length);
+  transforms.forEach((t, i) => {
+    e.set(t.tiltX ?? 0, t.rotY, t.tiltZ ?? 0);
+    q.setFromEuler(e);
+    m.compose(pos.set(t.x, t.y, t.z), q, scl.setScalar(t.s));
+    mesh.setMatrixAt(i, m);
+    mesh.setColorAt(i, c.setScalar(t.shade ?? 1));
+  });
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.computeBoundingSphere();
+  group.add(mesh);
   return group;
 }
 
-/** Things that can be swapped for loaded models (src/assets/models/<name>/). */
-interface ReplaceableSet {
-  transforms: Transform[];
-  /** Height loaded models are normalised to, matching the placeholder. */
-  height: number;
-  object: THREE.Group;
-}
-
 export interface VegetationOptions {
-  /** Areas to keep clear of trees and rocks. */
+  /** Areas to keep clear of trees. */
   avoid?: Circle[];
+  /**
+   * Areas emptied after placement. Unlike `avoid`, this doesn't change any
+   * random draws, so the rest of the forest stays exactly as it was. Use it
+   * for things added to an existing scene.
+   */
+  clear?: Circle[];
 }
 
-export function createVegetation(rng: Rng, terrain: Terrain, { avoid = [] }: VegetationOptions = {}) {
-  const { heightAt, surfaceAt, lakeDistance, fbm } = terrain;
+export function createVegetation(rng: Rng, terrain: Terrain, { avoid = [], clear = [] }: VegetationOptions = {}) {
+  const { surfaceAt, lakeDistance, fbm } = terrain;
   const group = new THREE.Group();
   group.name = 'vegetation';
 
-  const blocked = (x: number, z: number) => avoid.some((a) => (a.x - x) ** 2 + (a.z - z) ** 2 < a.r * a.r);
+  const inside = (circles: Circle[], x: number, z: number) => circles.some((a) => (a.x - x) ** 2 + (a.z - z) ** 2 < a.r * a.r);
+  const blocked = (x: number, z: number) => inside(avoid, x, z);
+  const cleared = (x: number, z: number) => inside(clear, x, z);
 
   // Forest density mask: noise makes stands of forest with open snowfields
   // between them, so the hill shapes stay readable.
@@ -196,16 +152,13 @@ export function createVegetation(rng: Rng, terrain: Terrain, { avoid = [] }: Veg
 
   // Trees, bucketed by type, variant and detail level for instancing.
   const treeSets = new Map<string, { type: TreeType; variant: number; detail: TreeDetail; transforms: Transform[] }>();
-  const counts: Partial<Record<TreeType | 'rocks', number>> = {};
+  const counts: Partial<Record<TreeType, number>> = {};
   for (const { x, z } of spots) {
     const zone: Zone = lakeDistance(x, z) < 2.2 ? 'shore' : z < -35 ? 'hills' : 'forest';
     const type = pickType(rng, TREE_MIX[zone]);
     const variant = Math.floor(rng() * VARIANTS_PER_TYPE);
     const detail: TreeDetail = Math.hypot(x - NEAR.x, z - NEAR.z) < NEAR.distance ? 'high' : 'low';
-    const key = `${type}:${variant}:${detail}`;
-    const set = treeSets.get(key) ?? { type, variant, detail, transforms: [] };
-    treeSets.set(key, set);
-    set.transforms.push({
+    const transform: Transform = {
       x, z,
       y: surfaceAt(x, z) - 0.1, // the drawn ground, so nothing floats on slopes
       rotY: rng() * Math.PI * 2,
@@ -213,25 +166,16 @@ export function createVegetation(rng: Rng, terrain: Terrain, { avoid = [] }: Veg
       tiltZ: rng.range(-0.04, 0.04),
       s: rng.range(0.8, 1.2) * (z < -40 ? 1.2 : 1),
       shade: rng.range(0.88, 1.04),
-    });
+    };
+    if (cleared(x, z)) continue; // after the draws, so later trees don't shift
+    const key = `${type}:${variant}:${detail}`;
+    const set = treeSets.get(key) ?? { type, variant, detail, transforms: [] };
+    treeSets.set(key, set);
+    set.transforms.push(transform);
     counts[type] = (counts[type] ?? 0) + 1;
   }
 
-  // Rocks around the shoreline.
-  const rocks: Transform[] = [];
-  for (let i = 0; i < 200 && rocks.length < 45; i++) {
-    const ang = rng() * Math.PI * 2;
-    const d = rng.range(0.95, 1.5);
-    const x = LAKE.x + Math.cos(ang) * LAKE.rx * d;
-    const z = LAKE.z + Math.sin(ang) * LAKE.rz * d;
-    if (blocked(x, z)) continue;
-    const s = rng.range(0.4, 1.4);
-    rocks.push({
-      x, z, y: Math.max(heightAt(x, z), -0.2) - s * 0.25,
-      rotY: rng() * 6.28, s, sy: s * 0.6, shade: rng.range(0.8, 1.1), variant: rng(),
-    });
-  }
-  counts.rocks = rocks.length;
+  skipRemovedRocks(rng, blocked);
 
   // One geometry per type x variant x detail, one shared material.
   const treeMaterial = createSnowTreeMaterial();
@@ -239,54 +183,28 @@ export function createVegetation(rng: Rng, terrain: Terrain, { avoid = [] }: Veg
   trees.name = 'trees';
   for (const { type, variant, detail, transforms } of treeSets.values()) {
     const geometry = createSnowTreeGeometry(type, { seed: variant + 1, detail });
-    trees.add(instanced(`${type}-${variant}-${detail}`, [{ geometry, material: treeMaterial }], transforms));
+    trees.add(instanced(`${type}-${variant}-${detail}`, geometry, treeMaterial, transforms));
   }
   group.add(trees);
 
-  // Placeholders go in immediately so the scene is never empty.
-  const sets: Record<string, ReplaceableSet> = {
-    rock: {
-      transforms: rocks,
-      height: 1.1,
-      object: instanced('rock', [{ geometry: makeRock(rng), material: placeholderMaterial() }], rocks),
-    },
-  };
-  for (const set of Object.values(sets)) group.add(set.object);
-
-  /**
-   * Swaps placeholders for real models wherever files exist in
-   * src/assets/models/<name>/. Instances are spread across the variants.
-   */
-  async function upgrade(modelUrls: Record<string, string[]>, loadInstanceParts: LoadInstanceParts) {
-    await Promise.all(Object.entries(sets).map(async ([name, set]) => {
-      const urls = modelUrls[name];
-      if (!urls?.length) return;
-      try {
-        const variants = await Promise.all(urls.map((u) => loadInstanceParts(u, { height: set.height })));
-        const replacement = new THREE.Group();
-        replacement.name = name;
-        variants.forEach((parts, v) => {
-          const subset = set.transforms.filter((t) => Math.floor((t.variant ?? 0) * variants.length) === v);
-          replacement.add(instanced(`${name}-${v}`, parts, subset, { flatten: false }));
-        });
-        group.remove(set.object);
-        disposeTree(set.object);
-        set.object = replacement;
-        group.add(replacement);
-      } catch (err) {
-        console.warn(`[landscape] couldn't load ${name} models, keeping placeholder`, err);
-      }
-    }));
-  }
-
-  return { object: group, upgrade, counts };
+  return { object: group, counts };
 }
 
-function disposeTree(obj: THREE.Object3D) {
-  obj.traverse((o) => {
-    if (!(o instanceof THREE.Mesh)) return;
-    o.geometry.dispose();
-    const mats: THREE.Material[] = Array.isArray(o.material) ? o.material : [o.material];
-    mats.forEach((m) => m.dispose());
-  });
+/**
+ * The shore rocks were removed, but the random draws they made are kept: the
+ * sky, aurora, snowfall and shooting stars draw from the same sequence after
+ * the trees, so skipping these would change all of them.
+ */
+function skipRemovedRocks(rng: Rng, blocked: (x: number, z: number) => boolean) {
+  for (let i = 0, spots = 0; i < 200 && spots < 45; i++) {
+    const ang = rng() * Math.PI * 2;
+    const d = rng.range(0.95, 1.5);
+    if (blocked(LAKE.x + Math.cos(ang) * LAKE.rx * d, LAKE.z + Math.sin(ang) * LAKE.rz * d)) continue;
+    rng.range(0.4, 1.4); // size
+    rng(); // turn
+    rng.range(0.8, 1.1); // shade
+    rng(); // model variant
+    spots++;
+  }
+  for (let i = 0; i < 12; i++) rng.range(0.75, 1.25); // the placeholder rock's 12 corners
 }

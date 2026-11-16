@@ -6,16 +6,18 @@ import { createWater } from './world/water';
 import { createSky } from './world/sky';
 import { createVegetation } from './props/vegetation';
 import { placeCabin } from './props/cabin';
+import { placeSauna } from './props/sauna';
 import { placePier } from './props/pier';
 import { placeSnowman } from './props/snowman';
 import { createAurora } from './effects/aurora';
 import { createSnowfall } from './effects/snowfall';
 import { createShootingStars } from './effects/shootingStars';
 import { createSmoke } from './effects/smoke';
-import { createCameraRig } from './camera/cameraRig';
+import { createCameraRig, type CameraRig } from './camera/cameraRig';
 import { createSnowballs } from './interactions/snowballs';
-import { modelUrls, loadInstanceParts, loadModel } from './loaders/models';
-import type { Updatable } from './types';
+import { modelUrls, loadModel } from './loaders/models';
+import { LAYOUT, type EditableProp } from './layout';
+import type { Terrain, Updatable } from './types';
 
 export interface LandscapeOptions {
   /** Same seed => same terrain, forest and sky. */
@@ -27,6 +29,12 @@ export interface Landscape {
   camera: THREE.PerspectiveCamera;
   renderer: THREE.WebGLRenderer;
   aurora: ReturnType<typeof createAurora>;
+  /** Moves the camera: resting framing plus mouse sway. */
+  rig: CameraRig;
+  /** Ground heights (e.g. for keeping moved props on the ground). */
+  terrain: Terrain;
+  /** Props the dev tool can move (see layout.ts). */
+  props: EditableProp[];
   /** Resolves once any drop-in models (src/assets/models/) have loaded. */
   assetsReady: Promise<void>;
   /** Stops rendering and frees GPU resources. */
@@ -61,34 +69,44 @@ export function createLandscape(canvas: HTMLCanvasElement, { seed = 1 }: Landsca
   const terrain = createTerrain(rng);
   scene.add(terrain.mesh);
 
-  // Foreground hero: on the bank in the lower left, turned three-quarters so
-  // the porch faces the camera and the lit side windows face the lake.
-  const cabinSpot = { x: -10, z: 19 };
-  const toCamera = Math.atan2(0 - cabinSpot.x, 40 - cabinSpot.z);
-  const cabinTurn = -0.65;
-  const cabin = placeCabin(terrain, {
-    ...cabinSpot,
-    facing: toCamera + cabinTurn,
-    woodpileFacing: -cabinTurn, // relative to the cabin: end grain straight at the camera
-  });
+  // Props, placed from layout.json (positions and turns; each placement
+  // function grounds its prop). The dev tool (press C) can move and save them.
+  //   cabin: on the bank in the lower left, three-quarters to the camera,
+  //          the woodpile off its front-right corner, end grain to the camera
+  //   pier: on the near shore, reaching out into the lake
+  //   snowman: on the open snow left of the cabin
+  //   sauna: right of the pier, its hot tub deck (mirrored to the pier side)
+  //          reaching out over the slope on posts
+  const cabin = placeCabin(terrain, { ...LAYOUT.cabin, woodpile: LAYOUT.woodpile });
   scene.add(cabin.object);
   const smokeAnchor = cabin.model.getObjectByName('smokeAnchor');
   if (!smokeAnchor) throw new Error('log cabin model has no smokeAnchor');
   const smoke = createSmoke(smokeAnchor);
   scene.add(smoke.object);
 
-  // Pier on the near shore, right of the cabin, reaching out into the lake.
-  const pier = placePier(terrain, { x: 16, turn: -0.45 });
-
-  // Snowman on the open snow left of the cabin, turned a little toward the
-  // cabin. On wide screens it sits in the bottom-left corner; on narrower ones
-  // it is out of frame. It has its own seed, so it doesn't change anything else.
-  const snowman = placeSnowman(terrain, { x: -15, z: 22.5, lookAt: { x: -4, z: 40 }, turn: 0.35 });
-  scene.add(snowman.object);
+  const pier = placePier(terrain, LAYOUT.pier);
   scene.add(pier.object);
+  // The snowman and sauna have their own seeds, so they don't change anything else.
+  const snowman = placeSnowman(terrain, LAYOUT.snowman);
+  scene.add(snowman.object);
+  const sauna = placeSauna(terrain, LAYOUT.sauna);
+  scene.add(sauna.object);
 
+  // Trees. `avoid` is fixed where the cabin and pier first stood:
+  // it changes the random draws, so moving it would reshuffle the whole
+  // forest. `clear` empties the spots where the props stand now, without
+  // changing any draws.
   const vegetation = createVegetation(rng, terrain, {
-    avoid: [{ ...cabinSpot, r: 9 }, pier.footprint],
+    avoid: [
+      { x: -10, z: 19, r: 9 },
+      { x: 5.4390368317793545, z: 17.862855645122927, r: 7 },
+    ],
+    clear: [
+      { x: cabin.object.position.x, z: cabin.object.position.z, r: 9 },
+      pier.footprint,
+      { x: snowman.object.position.x, z: snowman.object.position.z, r: 1.5 },
+      sauna.clearing,
+    ],
   });
   scene.add(vegetation.object);
 
@@ -102,7 +120,6 @@ export function createLandscape(canvas: HTMLCanvasElement, { seed = 1 }: Landsca
     cabin.object.add(model.object);
   };
   const assetsReady = Promise.all([
-    vegetation.upgrade(modelUrls, loadInstanceParts),
     upgradeCabin().catch((err) => console.warn('[landscape] cabin model failed, keeping placeholder', err)),
   ]).then(() => { if (reducedMotion) renderer.render(scene, camera); });
 
@@ -118,13 +135,33 @@ export function createLandscape(canvas: HTMLCanvasElement, { seed = 1 }: Landsca
 
   const rig = createCameraRig(camera);
 
-  // Click the scene to throw a snowball. Trees and rocks are instanced, so
+  // Props the dev tool can move, and how to read each back into layout.json.
+  const flat = (o: THREE.Object3D) => ({ x: o.position.x, z: o.position.z, facing: o.rotation.y });
+  const pierYaw = () => pier.object.rotation.y + pier.model.rotation.y;
+  const props: EditableProp[] = [
+    { name: 'woodpile', object: cabin.woodpile, read: () => flat(cabin.woodpile) }, // first: it sits inside the cabin
+    { name: 'cabin', object: cabin.object, read: () => flat(cabin.object) },
+    {
+      name: 'pier',
+      object: pier.object, // its stairs' snowdrift is in world space, so the group turns around the pontoon
+      pivot: () => pier.model.getWorldPosition(new THREE.Vector3()),
+      followGround: false,
+      read: () => {
+        const p = pier.model.getWorldPosition(new THREE.Vector3());
+        return { x: p.x, z: p.z, turn: pierYaw() - Math.PI };
+      },
+    },
+    { name: 'snowman', object: snowman.object, read: () => flat(snowman.object) },
+    { name: 'sauna', object: sauna.building, read: () => ({ ...flat(sauna.building), mirror: LAYOUT.sauna.mirror }) },
+  ];
+
+  // Click the scene to throw a snowball. Trees are instanced, so
   // three.js tests each copy's bounding sphere first and the raycast on a
   // click stays cheap even with the whole forest as a target.
   const snowballs = createSnowballs({
     camera,
     canvas,
-    targets: [terrain.mesh, water.object, cabin.object, pier.object, snowman.object, vegetation.object],
+    targets: [terrain.mesh, water.object, cabin.object, pier.object, snowman.object, sauna.building, vegetation.object],
   });
   scene.add(snowballs.object);
 
@@ -144,7 +181,7 @@ export function createLandscape(canvas: HTMLCanvasElement, { seed = 1 }: Landsca
   // Loop. Paused when the tab is hidden; a single still frame for reduced motion.
   const clock = new THREE.Clock();
   let time = 0;
-  const updatables: Updatable[] = [sky, aurora, snowfall, shootingStars, smoke, pier, snowman, snowballs];
+  const updatables: Updatable[] = [sky, aurora, snowfall, shootingStars, smoke, sauna, pier, snowman, snowballs];
 
   const tick = () => {
     const dt = Math.min(clock.getDelta(), 0.1);
@@ -173,7 +210,7 @@ export function createLandscape(canvas: HTMLCanvasElement, { seed = 1 }: Landsca
 
   // Handy for poking at the scene from the devtools console.
   if (import.meta.env.DEV) {
-    window.landscape = { scene, camera, renderer, aurora, shootingStars, snowman, snowballs, terrain, pier, counts: vegetation.counts, modelUrls, vegetation };
+    window.landscape = { scene, sauna, camera, renderer, aurora, shootingStars, snowman, snowballs, terrain, pier, counts: vegetation.counts, modelUrls, vegetation };
   }
 
   return {
@@ -181,6 +218,9 @@ export function createLandscape(canvas: HTMLCanvasElement, { seed = 1 }: Landsca
     camera,
     renderer,
     aurora,
+    rig,
+    terrain,
+    props,
     assetsReady,
     dispose() {
       renderer.setAnimationLoop(null);
